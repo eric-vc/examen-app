@@ -1,42 +1,47 @@
 import { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom'; // Importamos useParams
 import { db } from './firebase';
-import { collection, addDoc, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
 
 export default function Examen() {
+  const { id } = useParams(); // Obtenemos el ID de la URL (ej: 'parcial-1')
   const [nombre, setNombre] = useState('');
   const [respuestas, setRespuestas] = useState({});
   const [enviado, setEnviado] = useState(false);
   const [calificacion, setCalificacion] = useState(0);
-  
-  // Estado para guardar las preguntas que vienen de Firebase
-  const [preguntas, setPreguntas] = useState([]);
+  const [examenData, setExamenData] = useState(null); // Guardamos todo el objeto del examen
   const [cargando, setCargando] = useState(true);
 
-  // 1. Cargar las preguntas al iniciar
   useEffect(() => {
-    const obtenerPreguntas = async () => {
+    const cargarExamen = async () => {
       try {
-        const querySnapshot = await getDocs(collection(db, "preguntas"));
-        const listaPreguntas = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setPreguntas(listaPreguntas);
-        setCargando(false);
+        const docRef = doc(db, "examenes", id);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          setExamenData(docSnap.data());
+        } else {
+          setExamenData(null);
+        }
       } catch (error) {
-        console.error("Error cargando preguntas:", error);
+        console.error("Error:", error);
+      } finally {
         setCargando(false);
       }
     };
-    obtenerPreguntas();
-  }, []);
+    cargarExamen();
+  }, [id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    let aciertos = 0;
+    if (!examenData) return;
     
-    preguntas.forEach(p => {
-      if (respuestas[p.id] === p.correcta) aciertos++;
+    let aciertos = 0;
+    const preguntas = examenData.preguntas || [];
+    
+    preguntas.forEach((p, index) => {
+      // Usamos el index como ID temporal ya que las preguntas están en un array
+      if (respuestas[index] === p.correcta) aciertos++;
     });
 
     const notaFinal = preguntas.length > 0 ? (aciertos / preguntas.length) * 10 : 0;
@@ -44,6 +49,8 @@ export default function Examen() {
 
     try {
       await addDoc(collection(db, "resultados"), {
+        examenId: id, // Guardamos a qué examen pertenece esta nota
+        examenTitulo: examenData.titulo,
         nombre: nombre,
         calificacion: notaFinal,
         fecha: new Date().toISOString()
@@ -54,20 +61,20 @@ export default function Examen() {
     }
   };
 
-  if (cargando) return <div style={{textAlign: 'center', marginTop: '50px'}}>Cargando examen...</div>;
-  
-  if (preguntas.length === 0) return <div style={{textAlign: 'center', marginTop: '50px'}}>Aún no hay preguntas disponibles.</div>;
+  if (cargando) return <div style={{textAlign: 'center', marginTop: '50px'}}>Cargando...</div>;
+  if (!examenData) return <div style={{textAlign: 'center', marginTop: '50px'}}>Examen no encontrado 😢 <br/><Link to="/">Volver</Link></div>;
 
   if (enviado) return (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
       <h2>¡Examen enviado!</h2>
       <h3>Tu calificación: {calificacion.toFixed(1)} / 10</h3>
+      <Link to="/">Volver al inicio</Link>
     </div>
   );
 
   return (
     <div style={{ maxWidth: '600px', margin: '0 auto', padding: '20px' }}>
-      <h1>Examen de Curso</h1>
+      <h1>{examenData.titulo}</h1>
       <input 
         type="text" 
         placeholder="Escribe tu nombre completo" 
@@ -77,16 +84,16 @@ export default function Examen() {
         required
       />
       
-      {preguntas.map(p => (
-        <div key={p.id} style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ccc' }}>
+      {examenData.preguntas && examenData.preguntas.map((p, index) => (
+        <div key={index} style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ccc' }}>
           <p><strong>{p.texto}</strong></p>
-          {p.opciones.map((opt, index) => (
-            <label key={index} style={{ display: 'block', margin: '5px 0' }}>
+          {p.opciones.map((opt, i) => (
+            <label key={i} style={{ display: 'block', margin: '5px 0' }}>
               <input 
                 type="radio" 
-                name={`p-${p.id}`} 
+                name={`p-${index}`} 
                 value={opt} 
-                onChange={() => setRespuestas({...respuestas, [p.id]: opt})}
+                onChange={() => setRespuestas({...respuestas, [index]: opt})}
               /> {opt}
             </label>
           ))}
