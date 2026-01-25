@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom'; // Importamos useParams
+import { useParams, Link } from 'react-router-dom';
 import { db } from './firebase';
 import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
 
 export default function Examen() {
-  const { id } = useParams(); // Obtenemos el ID de la URL (ej: 'parcial-1')
+  const { id } = useParams();
   const [nombre, setNombre] = useState('');
   const [respuestas, setRespuestas] = useState({});
   const [enviado, setEnviado] = useState(false);
   const [calificacion, setCalificacion] = useState(0);
-  const [examenData, setExamenData] = useState(null); // Guardamos todo el objeto del examen
+  
+  const [examenInfo, setExamenInfo] = useState(null); // Info general (titulo)
+  const [preguntasAleatorias, setPreguntasAleatorias] = useState([]); // Las preguntas ya filtradas
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
@@ -19,9 +21,20 @@ export default function Examen() {
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
-          setExamenData(docSnap.data());
-        } else {
-          setExamenData(null);
+          const data = docSnap.data();
+          setExamenInfo(data);
+
+          // LÓGICA DE ALEATORIEDAD
+          let bancoPreguntas = data.preguntas || [];
+          
+          // 1. Barajar (Shuffle) usando algoritmo Fisher-Yates simple o sort random
+          const barajadas = [...bancoPreguntas].sort(() => 0.5 - Math.random());
+          
+          // 2. Aplicar límite si existe y es mayor a 0
+          const limite = data.limite && data.limite > 0 ? data.limite : barajadas.length;
+          const seleccionadas = barajadas.slice(0, limite);
+
+          setPreguntasAleatorias(seleccionadas);
         }
       } catch (error) {
         console.error("Error:", error);
@@ -34,23 +47,22 @@ export default function Examen() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!examenData) return;
     
     let aciertos = 0;
-    const preguntas = examenData.preguntas || [];
-    
-    preguntas.forEach((p, index) => {
-      // Usamos el index como ID temporal ya que las preguntas están en un array
-      if (respuestas[index] === p.correcta) aciertos++;
+    // Comparamos contra el array de preguntas ALEATORIAS que vio el usuario
+    preguntasAleatorias.forEach((p, index) => {
+      // Usamos el texto de la pregunta como clave única para las respuestas
+      // porque el index cambia en cada render aleatorio
+      if (respuestas[p.texto] === p.correcta) aciertos++;
     });
 
-    const notaFinal = preguntas.length > 0 ? (aciertos / preguntas.length) * 10 : 0;
+    const notaFinal = preguntasAleatorias.length > 0 ? (aciertos / preguntasAleatorias.length) * 10 : 0;
     setCalificacion(notaFinal);
 
     try {
       await addDoc(collection(db, "resultados"), {
-        examenId: id, // Guardamos a qué examen pertenece esta nota
-        examenTitulo: examenData.titulo,
+        examenId: id,
+        examenTitulo: examenInfo.titulo,
         nombre: nombre,
         calificacion: notaFinal,
         fecha: new Date().toISOString()
@@ -62,7 +74,7 @@ export default function Examen() {
   };
 
   if (cargando) return <div style={{textAlign: 'center', marginTop: '50px'}}>Cargando...</div>;
-  if (!examenData) return <div style={{textAlign: 'center', marginTop: '50px'}}>Examen no encontrado 😢 <br/><Link to="/">Volver</Link></div>;
+  if (!examenInfo) return <div style={{textAlign: 'center', marginTop: '50px'}}>Examen no encontrado.</div>;
 
   if (enviado) return (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
@@ -74,7 +86,11 @@ export default function Examen() {
 
   return (
     <div style={{ maxWidth: '600px', margin: '0 auto', padding: '20px' }}>
-      <h1>{examenData.titulo}</h1>
+      <h1>{examenInfo.titulo}</h1>
+      <p style={{color: '#666', marginBottom: '20px'}}>
+        Responde las siguientes {preguntasAleatorias.length} preguntas.
+      </p>
+
       <input 
         type="text" 
         placeholder="Escribe tu nombre completo" 
@@ -84,16 +100,17 @@ export default function Examen() {
         required
       />
       
-      {examenData.preguntas && examenData.preguntas.map((p, index) => (
+      {preguntasAleatorias.map((p, index) => (
         <div key={index} style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ccc' }}>
-          <p><strong>{p.texto}</strong></p>
+          <p><strong>{index + 1}. {p.texto}</strong></p>
           {p.opciones.map((opt, i) => (
             <label key={i} style={{ display: 'block', margin: '5px 0' }}>
               <input 
                 type="radio" 
-                name={`p-${index}`} 
+                // IMPORTANTE: Usamos p.texto para identificar la respuesta única
+                name={`pregunta-${p.texto}`} 
                 value={opt} 
-                onChange={() => setRespuestas({...respuestas, [index]: opt})}
+                onChange={() => setRespuestas({...respuestas, [p.texto]: opt})}
               /> {opt}
             </label>
           ))}
