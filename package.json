@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "homepage": "https://eric-vc.github.io/examen-app/",
   "scripts": {
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
