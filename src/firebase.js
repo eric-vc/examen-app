@@ -11,6 +11,11 @@ const firebaseConfig = {
   appId: "1:1034837524422:web:30cebed3f5e241fc77fcc7"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// Exportar base de datos
 export const db = getFirestore(app);
+
+// 2. EXPORTAR LA AUTENTICACIÓN (ESTO ES LO QUE FALTA)
 export const auth = getAuth(app);

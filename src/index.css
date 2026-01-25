@@ -13,6 +13,18 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+html, body, #root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 a {
   font-weight: 500;
   color: #646cff;
@@ -108,4 +120,13 @@ button:focus-visible {
 /* Ocultar el encabezado de PDF en la vista normal de pantalla */
 .encabezado-pdf {
   display: none;
+}
+
+.hoja-examen { display: none; }
+@media print {
+  .no-print, .no-print * { display: none !important; }
+  body { background-color: white !important; color: black !important; margin: 0 !important; }
+  .hoja-examen { display: block !important; width: 100% !important; position: absolute; top: 0; left: 0; }
+  table { width: 100% !important; border-collapse: collapse !important; }
+  td, th { border: 1px solid black !important; }
 }
