@@ -1,17 +1,35 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, addDoc } from 'firebase/firestore';
-
-const preguntas = [
-  { id: 1, texto: "¿Cuál es la capital de Francia?", opciones: ["Madrid", "París", "Londres"], correcta: "París" },
-  { id: 2, texto: "¿Cuánto es 2 + 2?", opciones: ["3", "4", "5"], correcta: "4" },
-];
+import { collection, addDoc, getDocs } from 'firebase/firestore';
 
 export default function Examen() {
   const [nombre, setNombre] = useState('');
   const [respuestas, setRespuestas] = useState({});
   const [enviado, setEnviado] = useState(false);
   const [calificacion, setCalificacion] = useState(0);
+  
+  // Estado para guardar las preguntas que vienen de Firebase
+  const [preguntas, setPreguntas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+
+  // 1. Cargar las preguntas al iniciar
+  useEffect(() => {
+    const obtenerPreguntas = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "preguntas"));
+        const listaPreguntas = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setPreguntas(listaPreguntas);
+        setCargando(false);
+      } catch (error) {
+        console.error("Error cargando preguntas:", error);
+        setCargando(false);
+      }
+    };
+    obtenerPreguntas();
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -21,10 +39,9 @@ export default function Examen() {
       if (respuestas[p.id] === p.correcta) aciertos++;
     });
 
-    const notaFinal = (aciertos / preguntas.length) * 10;
+    const notaFinal = preguntas.length > 0 ? (aciertos / preguntas.length) * 10 : 0;
     setCalificacion(notaFinal);
 
-    // Guardar en Firebase
     try {
       await addDoc(collection(db, "resultados"), {
         nombre: nombre,
@@ -36,6 +53,10 @@ export default function Examen() {
       console.error("Error al guardar:", error);
     }
   };
+
+  if (cargando) return <div style={{textAlign: 'center', marginTop: '50px'}}>Cargando examen...</div>;
+  
+  if (preguntas.length === 0) return <div style={{textAlign: 'center', marginTop: '50px'}}>Aún no hay preguntas disponibles.</div>;
 
   if (enviado) return (
     <div style={{ textAlign: 'center', marginTop: '50px' }}>
@@ -59,8 +80,8 @@ export default function Examen() {
       {preguntas.map(p => (
         <div key={p.id} style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ccc' }}>
           <p><strong>{p.texto}</strong></p>
-          {p.opciones.map(opt => (
-            <label key={opt} style={{ display: 'block', margin: '5px 0' }}>
+          {p.opciones.map((opt, index) => (
+            <label key={index} style={{ display: 'block', margin: '5px 0' }}>
               <input 
                 type="radio" 
                 name={`p-${p.id}`} 
