@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { db } from './firebase';
-import { collection, getDocs, orderBy, query, addDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query, addDoc, doc, updateDoc, arrayUnion, deleteDoc } from 'firebase/firestore';
 
 export default function PanelProfesor() {
   const [acceso, setAcceso] = useState(false);
@@ -9,10 +9,16 @@ export default function PanelProfesor() {
   const [examenes, setExamenes] = useState([]);
   const [resultados, setResultados] = useState([]);
   const [examenSeleccionado, setExamenSeleccionado] = useState(''); 
+  
+  // Nuevo Examen
   const [nuevoTitulo, setNuevoTitulo] = useState('');
-  const [limiteConfig, setLimiteConfig] = useState(0);
+  // NUEVO: Intentos
+  const [nuevoIntentos, setNuevoIntentos] = useState(1);
 
-  // AHORA CON 4 OPCIONES
+  // Edición
+  const [limiteConfig, setLimiteConfig] = useState(0);
+  const [intentosEdit, setIntentosEdit] = useState(1); // Para editar intentos de un examen existente
+
   const [pregunta, setPregunta] = useState({ 
     texto: '', op1: '', op2: '', op3: '', op4: '', correcta: 'op1' 
   });
@@ -28,19 +34,28 @@ export default function PanelProfesor() {
 
   useEffect(() => { if (acceso) cargarDatos(); }, [acceso]);
 
-  // Actualizar configuración de límite al cambiar examen
+  // Actualizar configuración al seleccionar examen
   useEffect(() => {
     if (examenSeleccionado) {
       const ex = examenes.find(e => e.id === examenSeleccionado);
-      if (ex) setLimiteConfig(ex.limite || ex.preguntas?.length || 0);
+      if (ex) {
+        setLimiteConfig(ex.limite || ex.preguntas?.length || 0);
+        setIntentosEdit(ex.intentosMaximos || 1);
+      }
     }
   }, [examenSeleccionado, examenes]);
 
   const crearExamen = async () => {
     if (!nuevoTitulo) return;
     try {
-      await addDoc(collection(db, "examenes"), { titulo: nuevoTitulo, preguntas: [], limite: 0 });
+      await addDoc(collection(db, "examenes"), { 
+        titulo: nuevoTitulo, 
+        preguntas: [], 
+        limite: 0,
+        intentosMaximos: parseInt(nuevoIntentos) // Guardamos intentos permitidos
+      });
       setNuevoTitulo('');
+      setNuevoIntentos(1);
       cargarDatos();
       alert("Examen creado");
     } catch (e) { console.error(e); }
@@ -49,33 +64,41 @@ export default function PanelProfesor() {
   const agregarPregunta = async (e) => {
     e.preventDefault();
     if (!examenSeleccionado) return alert("Selecciona un examen");
-    if (!pregunta.texto) return;
-
-    const textoCorrecta = pregunta[pregunta.correcta];
     
-    // Objeto con 4 opciones
     const nuevaPreguntaObj = {
       texto: pregunta.texto,
       opciones: [pregunta.op1, pregunta.op2, pregunta.op3, pregunta.op4],
-      correcta: textoCorrecta
+      correcta: pregunta[pregunta.correcta]
     };
 
     try {
       const examenRef = doc(db, "examenes", examenSeleccionado);
       await updateDoc(examenRef, { preguntas: arrayUnion(nuevaPreguntaObj) });
-      alert("Pregunta agregada (4 opciones)");
+      alert("Pregunta agregada");
       setPregunta({ texto: '', op1: '', op2: '', op3: '', op4: '', correcta: 'op1' });
       cargarDatos();
     } catch (error) { console.error(error); }
   };
 
-  const actualizarLimite = async () => {
+  const actualizarConfiguracion = async () => {
     if (!examenSeleccionado) return;
     try {
       const examenRef = doc(db, "examenes", examenSeleccionado);
-      await updateDoc(examenRef, { limite: parseInt(limiteConfig) });
-      alert("Límite actualizado");
+      await updateDoc(examenRef, { 
+        limite: parseInt(limiteConfig),
+        intentosMaximos: parseInt(intentosEdit)
+      });
+      alert("Configuración actualizada");
       cargarDatos();
+    } catch (e) { console.error(e); }
+  };
+
+  // NUEVO: Eliminar resultado
+  const eliminarResultado = async (id) => {
+    if(!window.confirm("¿Seguro que deseas eliminar este resultado?")) return;
+    try {
+      await deleteDoc(doc(db, "resultados", id));
+      cargarDatos(); // Recargar tabla
     } catch (e) { console.error(e); }
   };
 
@@ -93,59 +116,81 @@ export default function PanelProfesor() {
     <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
       <h1>Panel de Control ITS</h1>
 
-      {/* CREAR EXAMEN */}
+      {/* 1. CREAR EXAMEN */}
       <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
         <h3>1. Crear Nuevo Examen</h3>
-        <input value={nuevoTitulo} onChange={e => setNuevoTitulo(e.target.value)} placeholder="Ej: Programación Web" />
-        <button onClick={crearExamen} style={{ marginLeft: '10px' }}>Crear</button>
+        <input value={nuevoTitulo} onChange={e => setNuevoTitulo(e.target.value)} placeholder="Título del Examen" style={{marginRight: '10px'}}/>
+        <label>Intentos permitidos: </label>
+        <input type="number" value={nuevoIntentos} onChange={e => setNuevoIntentos(e.target.value)} style={{width: '50px', marginRight: '10px'}} min="1" />
+        <button onClick={crearExamen}>Crear</button>
       </div>
 
-      {/* GESTIÓN DE PREGUNTAS */}
+      {/* 2. GESTIÓN Y VISUALIZACIÓN */}
       <div style={{ background: '#f9f9f9', padding: '15px', borderRadius: '8px', marginBottom: '20px', border:'1px solid #ddd' }}>
-        <h3>2. Agregar Preguntas (4 Opciones)</h3>
+        <h3>2. Gestión de Examen</h3>
         <select value={examenSeleccionado} onChange={e => setExamenSeleccionado(e.target.value)} style={{ width: '100%', padding: '8px', marginBottom: '10px' }}>
-          <option value="">-- Selecciona Examen --</option>
-          {examenes.map(ex => <option key={ex.id} value={ex.id}>{ex.titulo} ({ex.preguntas?.length || 0} pregs)</option>)}
+          <option value="">-- Selecciona Examen para ver detalles --</option>
+          {examenes.map(ex => <option key={ex.id} value={ex.id}>{ex.titulo}</option>)}
         </select>
 
         {examenSeleccionado && infoExamen && (
           <>
+            {/* CONFIGURACIÓN */}
             <div style={{ padding: '10px', background: '#fff', border: '1px solid #ccc', marginBottom: '15px' }}>
-              <label>Mostrar aleatoriamente: <input type="number" value={limiteConfig} onChange={e => setLimiteConfig(e.target.value)} style={{ width: '50px' }} /> preguntas.</label>
-              <button onClick={actualizarLimite} style={{ marginLeft: '10px' }}>Guardar Config</button>
+              <h4>⚙️ Configuración</h4>
+              <div style={{ marginBottom: '10px' }}>
+                <label>Preguntas aleatorias a mostrar: </label>
+                <input type="number" value={limiteConfig} onChange={e => setLimiteConfig(e.target.value)} style={{ width: '50px' }} />
+              </div>
+              <div>
+                <label>Intentos Máximos por Alumno: </label>
+                <input type="number" value={intentosEdit} onChange={e => setIntentosEdit(e.target.value)} style={{ width: '50px' }} />
+                <button onClick={actualizarConfiguracion} style={{ marginLeft: '10px', background: '#007bff', color: 'white', border:'none', padding:'5px' }}>Guardar Cambios</button>
+              </div>
             </div>
 
+            {/* VISUALIZADOR DE PREGUNTAS */}
+            <div style={{ padding: '10px', background: '#fff', border: '1px solid #ccc', marginBottom: '15px', maxHeight: '200px', overflowY: 'auto' }}>
+              <h4>👁️ Preguntas en este examen ({infoExamen.preguntas?.length || 0})</h4>
+              <ul style={{ paddingLeft: '20px', fontSize: '0.9em' }}>
+                {infoExamen.preguntas?.map((p, idx) => (
+                  <li key={idx} style={{ marginBottom: '5px' }}>
+                    <strong>{p.texto}</strong> <br/>
+                    <span style={{color: 'green'}}>Correcta: {p.correcta}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* AGREGAR PREGUNTA */}
+            <h4>➕ Agregar Nueva Pregunta</h4>
             <form onSubmit={agregarPregunta} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-               <input type="text" placeholder="Enunciado de la pregunta" value={pregunta.texto} onChange={e => setPregunta({...pregunta, texto: e.target.value})} required style={{ padding: '8px' }} />
-               
-               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  <input type="text" placeholder="Opción 1" value={pregunta.op1} onChange={e => setPregunta({...pregunta, op1: e.target.value})} required />
-                  <input type="text" placeholder="Opción 2" value={pregunta.op2} onChange={e => setPregunta({...pregunta, op2: e.target.value})} required />
-                  <input type="text" placeholder="Opción 3" value={pregunta.op3} onChange={e => setPregunta({...pregunta, op3: e.target.value})} required />
-                  <input type="text" placeholder="Opción 4" value={pregunta.op4} onChange={e => setPregunta({...pregunta, op4: e.target.value})} required />
+               <input type="text" placeholder="Enunciado" value={pregunta.texto} onChange={e => setPregunta({...pregunta, texto: e.target.value})} required />
+               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                  <input type="text" placeholder="Op 1" value={pregunta.op1} onChange={e => setPregunta({...pregunta, op1: e.target.value})} required />
+                  <input type="text" placeholder="Op 2" value={pregunta.op2} onChange={e => setPregunta({...pregunta, op2: e.target.value})} required />
+                  <input type="text" placeholder="Op 3" value={pregunta.op3} onChange={e => setPregunta({...pregunta, op3: e.target.value})} required />
+                  <input type="text" placeholder="Op 4" value={pregunta.op4} onChange={e => setPregunta({...pregunta, op4: e.target.value})} required />
                </div>
-               
-               <label>Respuesta Correcta: 
-                 <select value={pregunta.correcta} onChange={e => setPregunta({...pregunta, correcta: e.target.value})} style={{ padding: '5px' }}>
-                   <option value="op1">Opción 1</option>
-                   <option value="op2">Opción 2</option>
-                   <option value="op3">Opción 3</option>
-                   <option value="op4">Opción 4</option>
-                 </select>
-               </label>
-               <button type="submit" style={{ background: '#28a745', color: 'white', border: 'none', padding: '10px', cursor:'pointer' }}>Guardar Pregunta</button>
+               <select value={pregunta.correcta} onChange={e => setPregunta({...pregunta, correcta: e.target.value})}>
+                 <option value="op1">Opción 1 es correcta</option>
+                 <option value="op2">Opción 2 es correcta</option>
+                 <option value="op3">Opción 3 es correcta</option>
+                 <option value="op4">Opción 4 es correcta</option>
+               </select>
+               <button type="submit" style={{ background: '#28a745', color: 'white', border: 'none', padding: '8px' }}>Guardar Pregunta</button>
             </form>
           </>
         )}
       </div>
 
-      {/* TABLA DE RESULTADOS ACTUALIZADA */}
-      <h3>📊 Resultados de Alumnos</h3>
+      {/* 3. RESULTADOS CON ELIMINACIÓN */}
+      <h3>📊 Resultados</h3>
       <div style={{ overflowX: 'auto' }}>
-        <table border="1" cellPadding="5" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '800px' }}>
+        <table border="1" cellPadding="5" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
           <thead>
             <tr style={{ background: '#333', color: 'white' }}>
-              <th>Unidad</th>
+              <th>Acción</th>
               <th>Control</th>
               <th>Nombre</th>
               <th>Examen</th>
@@ -156,8 +201,16 @@ export default function PanelProfesor() {
           <tbody>
             {resultados.map(r => (
               <tr key={r.id}>
-                <td>{r.unidad || '-'}</td>
-                <td>{r.numControl || '-'}</td>
+                <td style={{ textAlign: 'center' }}>
+                  <button 
+                    onClick={() => eliminarResultado(r.id)}
+                    style={{ background: 'red', color: 'white', border: 'none', cursor: 'pointer', borderRadius: '3px' }}
+                    title="Eliminar este resultado"
+                  >
+                    🗑️
+                  </button>
+                </td>
+                <td>{r.numControl}</td>
                 <td>{r.nombre}</td>
                 <td>{r.examenTitulo}</td>
                 <td style={{ fontWeight: 'bold', color: r.calificacion >= 7 ? 'green' : 'red' }}>
