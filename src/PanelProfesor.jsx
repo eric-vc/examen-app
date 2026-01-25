@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { db } from './firebase';
+import { db, auth } from './firebase'; // IMPORTAMOS AUTH
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth'; // FUNCIONES DE AUTH
 import { collection, getDocs, orderBy, query, addDoc, doc, updateDoc, arrayUnion, deleteDoc, getDoc } from 'firebase/firestore';
 import EncabezadoPDF from './EncabezadoPDF';
 
@@ -12,8 +13,12 @@ const THEMES = {
 const UNIDADES_ACADEMICAS = ["Zongolica", "Tequila", "Nogales", "Acultzinapa", "Cuichapa", "Tezonapa", "Tehuipango"];
 
 export default function PanelProfesor() {
-  const [acceso, setAcceso] = useState(false);
-  const [clave, setClave] = useState('');
+  // --- ESTADOS DE AUTENTICACIÓN ---
+  const [usuario, setUsuario] = useState(null); // Objeto usuario de Firebase
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorLogin, setErrorLogin] = useState('');
+  
   const [temaActual, setTemaActual] = useState(() => localStorage.getItem('temaApp') || 'claro');
   const styles = THEMES[temaActual];
 
@@ -55,6 +60,45 @@ export default function PanelProfesor() {
 
   useEffect(() => localStorage.setItem('temaApp', temaActual), [temaActual]);
 
+  // --- EFECTO DE SESIÓN (PERSISTENCIA) ---
+  useEffect(() => {
+    // Esto revisa si ya estabas logueado al recargar la página
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUsuario(user);
+        cargarExamenes(); // Cargar datos al detectar login
+      } else {
+        setUsuario(null);
+        setExamenes([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- LOGIN SEGURO CON FIREBASE ---
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setErrorLogin('');
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      // No necesitamos setUsuario aquí, el onAuthStateChanged lo hará
+    } catch (error) {
+      console.error(error);
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
+        setErrorLogin('Correo o contraseña incorrectos.');
+      } else if (error.code === 'auth/too-many-requests') {
+        setErrorLogin('Demasiados intentos fallidos. Intenta más tarde.');
+      } else {
+        setErrorLogin('Error al iniciar sesión: ' + error.message);
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    signOut(auth);
+    setVerResultados(false);
+  };
+
   // --- CARGAS DE DATOS ---
   const cargarExamenes = async () => {
     const exSnap = await getDocs(collection(db, "examenes"));
@@ -71,8 +115,6 @@ export default function PanelProfesor() {
     } catch (error) { console.error(error); } 
     finally { setCargandoResultados(false); }
   };
-
-  useEffect(() => { if (acceso) cargarExamenes(); }, [acceso]);
 
   useEffect(() => {
     if (examenSeleccionado) {
@@ -192,48 +234,73 @@ export default function PanelProfesor() {
 
   const handleImprimirAdmin = (modo) => { setModoImpresion(modo); setTimeout(() => { window.print(); }, 500); };
 
-  // --- CSV / EXPORTACIÓN ---
-  const handleImportarCSV = (e) => { /* (Código importación igual al anterior) */ };
-  const handleExportarCSV = () => { /* (Código exportación preguntas igual al anterior) */ };
+  const handleImportarCSV = (e) => {
+    const file = e.target.files[0];
+    if (!file || !examenSeleccionado) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const text = evt.target.result;
+      const lines = text.split('\n');
+      const nuevasPreguntas = [];
+      lines.forEach((line) => {
+        if (!line.trim()) return;
+        const cols = line.split(',');
+        if (cols.length >= 6) {
+          const texto = cols[0].trim();
+          if (texto.toLowerCase() === 'pregunta') return;
+          const op1 = cols[1].trim(); const op2 = cols[2].trim(); const op3 = cols[3].trim(); const op4 = cols[4].trim();
+          const correctaIdx = parseInt(cols[5].trim());
+          if (texto && op1 && op2 && op3 && op4 && correctaIdx >= 1 && correctaIdx <= 4) {
+            const opciones = [op1, op2, op3, op4];
+            nuevasPreguntas.push({ texto: texto, opciones: opciones, correcta: opciones[correctaIdx - 1] });
+          }
+        }
+      });
+      if (nuevasPreguntas.length > 0) {
+        try {
+          const ref = doc(db, "examenes", examenSeleccionado);
+          await updateDoc(ref, { preguntas: arrayUnion(...nuevasPreguntas) });
+          alert(`Importadas: ${nuevasPreguntas.length}`);
+          cargarExamenes();
+        } catch (error) { alert("Error Firebase"); }
+      } else { alert("Error CSV"); }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
+  };
 
-  // --- NUEVA FUNCIÓN: EXPORTAR RESULTADOS ---
-  const handleExportarResultados = () => {
-    if (resultadosFiltrados.length === 0) return alert("No hay resultados para exportar.");
-    
-    // Encabezados del CSV
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "No. Control,Nombre del Alumno,Unidad Academica,Examen,Calificacion,Fecha,Hora\n";
-
-    resultadosFiltrados.forEach(r => {
-      const fechaObj = new Date(r.fecha);
-      const fecha = fechaObj.toLocaleDateString();
-      const hora = fechaObj.toLocaleTimeString();
-      
-      // Limpiar comas para no romper el CSV
-      const clean = (txt) => txt ? `"${txt.toString().replace(/"/g, '""')}"` : "";
-
-      const row = [
-        clean(r.numControl),
-        clean(r.nombre),
-        clean(r.unidad),
-        clean(r.examenTitulo),
-        r.calificacion.toFixed(2),
-        fecha,
-        hora
-      ].join(",");
-      csvContent += row + "\n";
+  const handleExportarCSV = () => {
+    if (!examenSeleccionado) return;
+    const ex = examenes.find(e => e.id === examenSeleccionado);
+    if (!ex || !ex.preguntas || ex.preguntas.length === 0) return alert("Sin preguntas.");
+    let csvContent = "data:text/csv;charset=utf-8,Pregunta,Op1,Op2,Op3,Op4,IndexCorrecta\n";
+    ex.preguntas.forEach(p => {
+      const clean = (txt) => `"${txt.replace(/"/g, '""')}"`;
+      const idxCorrecta = p.opciones.indexOf(p.correcta) + 1;
+      csvContent += [clean(p.texto), clean(p.opciones[0]), clean(p.opciones[1]), clean(p.opciones[2]), clean(p.opciones[3]), idxCorrecta].join(",") + "\n";
     });
-
-    const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Reporte_Calificaciones_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `${ex.titulo}_preguntas.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const handleLogin = () => { if (clave === 'PROFE123') setAcceso(true); else alert("Error"); };
+  const handleExportarResultados = () => {
+    if (resultadosFiltrados.length === 0) return alert("No hay resultados.");
+    let csvContent = "data:text/csv;charset=utf-8,Control,Nombre,Unidad,Examen,Calificacion,Fecha\n";
+    resultadosFiltrados.forEach(r => {
+      const clean = (txt) => txt ? `"${txt.toString().replace(/"/g, '""')}"` : "";
+      csvContent += [clean(r.numControl), clean(r.nombre), clean(r.unidad), clean(r.examenTitulo), r.calificacion.toFixed(2), new Date(r.fecha).toLocaleDateString()].join(",") + "\n";
+    });
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `Reporte_Calificaciones.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // VISTA IMPRESIÓN
   if (modoImpresion && examenSeleccionado) {
@@ -259,21 +326,52 @@ export default function PanelProfesor() {
 
   const inputStyle = { padding: '8px', borderRadius: '4px', border: `1px solid ${styles.border}`, background: styles.inputBg, color: styles.text };
 
-  if (!acceso) return (
+  // --- VISTA LOGIN (NUEVA CON FIREBASE AUTH) ---
+  if (!usuario) return (
     <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: styles.bg, color: styles.text }}>
-      <div style={{ padding: '40px', background: styles.card, borderRadius: '10px', border: `1px solid ${styles.border}` }}>
-        <h2>Acceso Docente</h2>
-        <input type="password" placeholder="Pass" onChange={e => setClave(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} style={{...inputStyle, marginBottom:'10px'}} /><br/>
-        <button onClick={handleLogin}>Entrar</button>
+      <div style={{ padding: '40px', background: styles.card, borderRadius: '10px', border: `1px solid ${styles.border}`, maxWidth:'350px', width:'100%' }}>
+        <h2 style={{textAlign:'center'}}>Acceso ITSZ</h2>
+        <p style={{textAlign:'center', fontSize:'0.9em', color:'#666', marginBottom:'20px'}}>Ingresa tus credenciales institucionales</p>
+        
+        <form onSubmit={handleLogin}>
+            <input 
+                type="email" 
+                placeholder="Correo electrónico" 
+                value={email}
+                onChange={e => setEmail(e.target.value)} 
+                style={{...inputStyle, marginBottom:'10px', width:'100%'}} 
+                required
+            />
+            <input 
+                type="password" 
+                placeholder="Contraseña" 
+                value={password}
+                onChange={e => setPassword(e.target.value)} 
+                style={{...inputStyle, marginBottom:'15px', width:'100%'}} 
+                required
+            />
+            
+            {errorLogin && <p style={{color:'red', fontSize:'0.8em', textAlign:'center', marginBottom:'10px'}}>{errorLogin}</p>}
+            
+            <button type="submit" style={{width:'100%', padding:'10px', background: styles.accent, color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontWeight:'bold'}}>
+                Iniciar Sesión
+            </button>
+        </form>
       </div>
     </div>
   );
 
+  // VISTA PRINCIPAL
   return (
     <div className="no-print" style={{ minHeight: '100vh', backgroundColor: styles.bg, color: styles.text, padding: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
         <h1>Panel Admin ITSZ</h1>
-        <div><button onClick={() => setTemaActual('claro')}>🌞</button><button onClick={() => setTemaActual('oscuro')}>🌙</button></div>
+        <div style={{display:'flex', gap:'10px'}}>
+            <button onClick={() => setTemaActual('claro')}>🌞</button>
+            <button onClick={() => setTemaActual('oscuro')}>🌙</button>
+            {/* BOTÓN SALIR */}
+            <button onClick={handleLogout} style={{background:'#dc3545', color:'white', border:'none', borderRadius:'4px', padding:'0 15px', cursor:'pointer'}}>Salir</button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
@@ -314,6 +412,13 @@ export default function PanelProfesor() {
                <div style={{display:'flex', gap:'5px', marginTop:'10px'}}>
                  <button onClick={() => handleImprimirAdmin('vacio')} style={{width:'50%'}}>🖨️ Vacío</button>
                  <button onClick={() => handleImprimirAdmin('respuestas')} style={{width:'50%'}}>🔑 Clave</button>
+               </div>
+               <div style={{borderTop:`1px solid ${styles.border}`, paddingTop:'10px', marginTop:'10px'}}>
+                 <h4 style={{margin:'0 0 5px 0'}}>CSV</h4>
+                 <label style={{display:'block', marginBottom:'5px', cursor:'pointer', background:'#6c757d', color:'white', textAlign:'center', padding:'5px', borderRadius:'4px'}}>
+                   📥 Importar CSV <input type="file" accept=".csv" onChange={handleImportarCSV} style={{display:'none'}} />
+                 </label>
+                 <button onClick={handleExportarCSV} style={{width:'100%', background:'#17a2b8', color:'white', border:'none', padding:'5px', borderRadius:'4px'}}>📤 Descargar CSV</button>
                </div>
              </div>
            )}
@@ -387,7 +492,7 @@ export default function PanelProfesor() {
 
       {verResultados && (
         <div className="fade-in">
-            {/* --- AQUÍ ESTÁN LOS FILTROS RESTAURADOS --- */}
+            {/* --- FILTROS Y EXPORTACIÓN --- */}
             <div style={{ background: styles.card, padding: '15px', borderRadius: '8px', border: `1px solid ${styles.border}`, marginBottom: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems:'flex-end' }}>
                 <div style={{display:'flex', flexDirection:'column'}}>
                     <label style={{fontSize:'0.8em'}}>Por Examen:</label>
@@ -406,7 +511,7 @@ export default function PanelProfesor() {
                 </div>
                 <button onClick={() => setFiltros({examenId:'', numControl:'', unidad:'', fechaInicio:'', fechaFin:'', estado:''})} style={{padding:'8px', background:'#6c757d', color:'white', border:'none', borderRadius:'4px', height:'40px'}}>Limpiar</button>
                 
-                {/* BOTÓN NUEVO PARA EXPORTAR */}
+                {/* BOTÓN DESCARGAR REPORTE */}
                 <button onClick={handleExportarResultados} style={{padding:'8px 15px', background:'#17a2b8', color:'white', border:'none', borderRadius:'4px', height:'40px', fontWeight:'bold', marginLeft:'auto'}}>
                     📥 Descargar Reporte
                 </button>
@@ -414,22 +519,21 @@ export default function PanelProfesor() {
 
             <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%', borderCollapse:'collapse', background:styles.card, color:styles.text}}>
-                <thead><tr style={{background:styles.accent, color:'white'}}><th style={{padding:'5px'}}>Acción</th><th>Control</th><th>Nombre</th><th>Unidad</th><th>Examen</th><th>Nota</th><th>Fecha</th></tr></thead>
+                <thead><tr style={{background:styles.accent, color:'white'}}><th style={{padding:'5px'}}>#</th><th>Control</th><th>Nombre</th><th>Unidad</th><th>Examen</th><th>Nota</th><th>Fecha</th></tr></thead>
                 <tbody>
-                    {resultadosFiltrados.length > 0 ? resultadosFiltrados.map(r => (
+                    {resultadosFiltrados.length > 0 ? resultadosFiltrados.map((r, i) => (
                     <tr key={r.id} style={{borderBottom:`1px solid ${styles.border}`}}>
-                        <td style={{textAlign:'center'}}><button onClick={() => eliminarResultado(r.id)} style={{background:'red', color:'white', border:'none', borderRadius:'3px', cursor:'pointer'}}>🗑️</button></td>
+                        <td style={{textAlign:'center'}}>{i+1}</td>
                         <td style={{padding:'5px'}}>{r.numControl}</td>
                         <td style={{padding:'5px'}}>{r.nombre}</td>
                         <td style={{padding:'5px'}}>{r.unidad}</td>
                         <td style={{padding:'5px'}}>{r.examenTitulo}</td>
                         <td style={{padding:'5px', fontWeight:'bold', color: r.calificacion >= 7 ? 'green' : 'red'}}>{r.calificacion.toFixed(1)}</td>
-                        <td style={{padding:'5px', fontSize:'0.9em'}}>{new Date(r.fecha).toLocaleString()}</td>
+                        <td style={{padding:'5px', fontSize:'0.9em'}}>{new Date(r.fecha).toLocaleDateString()}</td>
                     </tr>
                     )) : <tr><td colSpan="7" style={{padding:'20px', textAlign:'center'}}>Sin resultados.</td></tr>}
                 </tbody>
                 </table>
-                <p style={{textAlign:'right', fontSize:'0.8em'}}>Mostrando {resultadosFiltrados.length} registros.</p>
             </div>
         </div>
       )}
