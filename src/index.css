@@ -66,3 +66,46 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+/* --- ESTILOS DE IMPRESIÓN --- */
+@media print {
+  /* Ocultar todo lo que tenga la clase no-print */
+  .no-print { display: none !important; }
+  
+  /* Forzar fondo blanco y texto negro para ahorrar tinta y formalidad */
+  body, div, h1, h2, h3, p, span, label, table {
+    background-color: white !important;
+    color: black !important;
+    border-color: #000 !important;
+  }
+  
+  /* Configuración de página */
+  @page {
+    margin: 2cm;
+    size: letter;
+  }
+
+  /* Estilos específicos para la hoja de examen */
+  .hoja-examen {
+    font-family: "Times New Roman", serif;
+    font-size: 12pt;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .encabezado-pdf {
+    display: flex !important;
+    align-items: center;
+    border-bottom: 2px solid black;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+  }
+}
+
+/* Ocultar el encabezado de PDF en la vista normal de pantalla */
+.encabezado-pdf {
+  display: none;
+}
