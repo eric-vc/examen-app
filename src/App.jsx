@@ -4,7 +4,7 @@ import PanelProfesor from './PanelProfesor';
 
 function App() {
   return (
-    <BrowserRouter basename="/nombre-de-tu-repo"> {/* IMPORTANTE: Cambia esto por el nombre de tu repo en GitHub */}
+    <BrowserRouter basename="/examen-app"> {/* IMPORTANTE: Cambia esto por el nombre de tu repo en GitHub */}
       <Routes>
         <Route path="/" element={<Examen />} />
         <Route path="/admin" element={<PanelProfesor />} />
