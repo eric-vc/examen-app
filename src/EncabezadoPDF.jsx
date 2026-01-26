@@ -1,4 +1,5 @@
 import React from 'react';
+import logoInstitucional from './images/LOGOS.png';
 
 export default function EncabezadoPDF({ asignatura, unidad, tema, opcion, alumnoNombre, numControl, unidadAcademica, calificacion, fecha }) {
   
@@ -20,7 +21,7 @@ export default function EncabezadoPDF({ asignatura, unidad, tema, opcion, alumno
       {/* 1. LOGO Y TÍTULO */}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', paddingBottom: '5px' }}>
         <img 
-          src="https://upload.wikimedia.org/wikipedia/commons/e/e4/Logo_TecNM.png" 
+          src={logoInstitucional}
           alt="Logo TecNM" 
           style={{ height: '50px', marginRight: '15px' }} 
         />
