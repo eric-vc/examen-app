@@ -14,7 +14,6 @@ const UNIDADES_ACADEMICAS = ["Zongolica", "Tequila", "Nogales", "Acultzinapa", "
 
 export default function PanelProfesor() {
   // --- AUTENTICACIÓN ---
-  const [acceso, setAcceso] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,9 +34,9 @@ export default function PanelProfesor() {
   // --- UI ---
   const [cargandoResultados, setCargandoResultados] = useState(false);
 
-  // --- CREACIÓN EXAMEN (CAMPOS ACTUALIZADOS) ---
-  const [nuevoNombreExamen, setNuevoNombreExamen] = useState(''); // Ej: "Diagnóstico"
-  const [nuevaAsignatura, setNuevaAsignatura] = useState('');     // Ej: "Programación Web"
+  // --- CREACIÓN EXAMEN (CAMPOS NUEVOS) ---
+  const [nuevoNombreExamen, setNuevoNombreExamen] = useState('');
+  const [nuevaAsignatura, setNuevaAsignatura] = useState('');
   const [nuevaUnidad, setNuevaUnidad] = useState('');
   const [nuevoTema, setNuevoTema] = useState('');
   const [nuevaOpcion, setNuevaOpcion] = useState('1ra'); 
@@ -109,42 +108,33 @@ export default function PanelProfesor() {
     finally { setCargandoResultados(false); }
   };
 
-const handleAuth = async (e) => {
+  // --- LOGIN / REGISTRO CON LISTA BLANCA ---
+  const handleAuth = async (e) => {
     e.preventDefault();
     setErrorLogin('');
-
     try {
         if (esRegistro) {
-            // --- FLUJO DE REGISTRO (LISTA BLANCA) ---
-            
-            // 1. Consultar si el correo existe en la colección 'docentes'
             const q = query(collection(db, "docentes"), where("email", "==", email));
             const querySnapshot = await getDocs(q);
-
             if (querySnapshot.empty) {
-                setErrorLogin("❌ Este correo no está autorizado. Pide al administrador que te agregue primero.");
+                setErrorLogin("❌ Correo no autorizado. Pide al admin que te agregue.");
                 return;
             }
-
-            // 2. Si existe, creamos la cuenta real en Firebase Auth
             await createUserWithEmailAndPassword(auth, email, password);
-            // El onAuthStateChanged detectará el login automáticamente
-            
         } else {
-            // --- FLUJO DE INICIO DE SESIÓN NORMAL ---
             await signInWithEmailAndPassword(auth, email, password);
         }
     } catch (error) {
         console.error(error);
-        if (error.code === 'auth/email-already-in-use') setErrorLogin("Este correo ya está registrado. Inicia sesión.");
-        else if (error.code === 'auth/weak-password') setErrorLogin("La contraseña debe tener al menos 6 caracteres.");
-        else if (error.code === 'auth/invalid-credential') setErrorLogin("Correo o contraseña incorrectos.");
-        else setErrorLogin("Error: " + error.message);
+        if (error.code === 'auth/email-already-in-use') setErrorLogin("Correo ya registrado.");
+        else if (error.code === 'auth/invalid-credential') setErrorLogin("Credenciales incorrectas.");
+        else setErrorLogin(error.message);
     }
   };
 
   const handleLogout = () => { signOut(auth); setVistaActual('examenes'); };
 
+  // --- SINCRONIZACIÓN CONFIG ---
   useEffect(() => {
     if (examenSeleccionado) {
       const ex = examenes.find(e => e.id === examenSeleccionado);
@@ -158,21 +148,15 @@ const handleAuth = async (e) => {
     }
   }, [examenSeleccionado, examenes]);
 
-  // --- CRUD EXAMENES (ACTUALIZADO) ---
+  // --- CRUD EXAMENES ---
   const crearExamen = async () => {
-    // Validamos ambos campos nuevos
-    if (!nuevoNombreExamen || !nuevaAsignatura) return alert("Debes poner Nombre del Examen y Asignatura.");
-    
+    if (!nuevoNombreExamen || !nuevaAsignatura) return alert("Falta Nombre o Asignatura.");
     const nombreProfe = docenteActual ? docenteActual.nombre : "Sin Asignar";
-    
     try {
       await addDoc(collection(db, "examenes"), { 
-        nombreExamen: nuevoNombreExamen, // NOMBRE IDENTIFICADOR (Ej: Diagnóstico)
-        asignatura: nuevaAsignatura,     // NOMBRE OFICIAL (Ej: Matemáticas)
-        // Mantenemos "titulo" por compatibilidad si lo usabas en Home, 
-        // pero ahora preferiremos nombreExamen para la lista.
-        titulo: `${nuevoNombreExamen} - ${nuevaAsignatura}`, 
-        
+        nombreExamen: nuevoNombreExamen,
+        asignatura: nuevaAsignatura,
+        titulo: `${nuevoNombreExamen} - ${nuevaAsignatura}`, // Respaldo
         unidad: nuevaUnidad, 
         tema: nuevoTema, 
         opcion: nuevaOpcion,
@@ -184,11 +168,11 @@ const handleAuth = async (e) => {
         docenteEmail: usuario.email
       });
       setNuevoNombreExamen(''); setNuevaAsignatura(''); setNuevaUnidad(''); setNuevoTema(''); 
-      cargarExamenes(); alert("Examen creado exitosamente.");
+      cargarExamenes(); alert("Creado correctamente.");
     } catch (e) { console.error(e); }
   };
 
-  // --- RESTO DE FUNCIONES (CRUD DOCENTES, PREGUNTAS, CSV) IGUAL QUE ANTES ---
+  // --- CRUD GENERICS ---
   const guardarDocente = async () => { if (!nuevoDocenteNombre || !nuevoDocenteEmail) return alert("Faltan datos"); try { await addDoc(collection(db, "docentes"), { nombre: nuevoDocenteNombre, email: nuevoDocenteEmail, fechaRegistro: new Date().toISOString() }); alert("Docente agregado"); setNuevoDocenteNombre(''); setNuevoDocenteEmail(''); cargarDocentes(usuario.email); } catch (e) { alert("Error"); } };
   const eliminarDocente = async (id) => { if(!confirm("¿Eliminar?")) return; try { await deleteDoc(doc(db, "docentes", id)); cargarDocentes(usuario.email); } catch(e) { alert("Error"); } };
   const limpiarFormularioPregunta = () => { setPregunta({ texto: '', op1: '', op2: '', op3: '', op4: '', correcta: 'op1' }); setModoEdicion(false); setIndiceEdicion(null); };
@@ -198,9 +182,62 @@ const handleAuth = async (e) => {
   const actualizarConfiguracion = async () => { if (!examenSeleccionado) return; await updateDoc(doc(db, "examenes", examenSeleccionado), { limite: parseInt(limiteConfig), intentosMaximos: parseInt(intentosEdit), permitirImpresion: permitirPrint }); alert("Guardado"); cargarExamenes(); };
   const eliminarResultado = async (id) => { if(!confirm("¿Eliminar?")) return; await deleteDoc(doc(db, "resultados", id)); cargarResultados(); };
   const resultadosFiltrados = useMemo(() => { return resultados.filter(r => { if (filtros.examenId && r.examenId !== filtros.examenId) return false; if (filtros.numControl && !r.numControl.includes(filtros.numControl.toUpperCase())) return false; if (filtros.unidad && r.unidad !== filtros.unidad) return false; return true; }); }, [resultados, filtros]);
+  
+  // --- IMPORTAR / EXPORTAR CSV (RESTAURADO) ---
+  const handleImportarCSV = (e) => {
+    const file = e.target.files[0];
+    if (!file || !examenSeleccionado) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const text = evt.target.result;
+      const lines = text.split('\n');
+      const nuevasPreguntas = [];
+      lines.forEach((line) => {
+        if (!line.trim()) return;
+        const cols = line.split(',');
+        if (cols.length >= 6) {
+          const texto = cols[0].trim();
+          if (texto.toLowerCase() === 'pregunta') return;
+          const op1 = cols[1].trim(); const op2 = cols[2].trim(); const op3 = cols[3].trim(); const op4 = cols[4].trim();
+          const correctaIdx = parseInt(cols[5].trim());
+          if (texto && op1 && op2 && op3 && op4 && correctaIdx >= 1 && correctaIdx <= 4) {
+            const opciones = [op1, op2, op3, op4];
+            nuevasPreguntas.push({ texto: texto, opciones: opciones, correcta: opciones[correctaIdx - 1] });
+          }
+        }
+      });
+      if (nuevasPreguntas.length > 0) {
+        try {
+          const ref = doc(db, "examenes", examenSeleccionado);
+          await updateDoc(ref, { preguntas: arrayUnion(...nuevasPreguntas) });
+          alert(`Se importaron ${nuevasPreguntas.length} preguntas.`);
+          cargarExamenes();
+        } catch (error) { alert("Error al subir a Firebase."); }
+      } else { alert("Error en CSV. Revisa el formato."); }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
+  };
+
+  const handleExportarCSV = () => {
+    if (!examenSeleccionado) return;
+    const ex = examenes.find(e => e.id === examenSeleccionado);
+    if (!ex || !ex.preguntas || ex.preguntas.length === 0) return alert("Sin preguntas.");
+    let csvContent = "data:text/csv;charset=utf-8,Pregunta,Op1,Op2,Op3,Op4,IndexCorrecta\n";
+    ex.preguntas.forEach(p => {
+      const clean = (txt) => `"${txt.replace(/"/g, '""')}"`;
+      const idxCorrecta = p.opciones.indexOf(p.correcta) + 1;
+      csvContent += [clean(p.texto), clean(p.opciones[0]), clean(p.opciones[1]), clean(p.opciones[2]), clean(p.opciones[3]), idxCorrecta].join(",") + "\n";
+    });
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `${ex.nombreExamen || ex.titulo}_preguntas.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleExportarResultados = () => { if (resultadosFiltrados.length === 0) return alert("Sin datos"); let c = "data:text/csv;charset=utf-8,Control,Nombre,Unidad,Examen,Calificacion,Fecha\n"; resultadosFiltrados.forEach(r => { const cl = (t) => t ? `"${t.toString().replace(/"/g, '""')}"` : ""; c += [cl(r.numControl), cl(r.nombre), cl(r.unidad), cl(r.examenTitulo), r.calificacion.toFixed(2), new Date(r.fecha).toLocaleDateString()].join(",") + "\n"; }); const l = document.createElement("a"); l.href = encodeURI(c); l.download = "Reporte.csv"; document.body.appendChild(l); l.click(); document.body.removeChild(l); };
-  const handleImportarCSV = (e) => { /* Lógica anterior */ };
-  const handleExportarCSV = () => { /* Lógica anterior */ };
   const handleImprimirAdmin = (modo) => { setModoImpresion(modo); setTimeout(() => { window.print(); }, 500); };
   const obtenerPreguntasPaginadas = () => { const ex = examenes.find(e => e.id === examenSeleccionado); if (!ex || !ex.preguntas) return []; const iU = paginaActual * preguntasPorPagina; return ex.preguntas.slice(iU - preguntasPorPagina, iU); };
   const totalPreguntasActuales = () => { const ex = examenes.find(e => e.id === examenSeleccionado); return ex?.preguntas?.length || 0; }; const totalPaginas = Math.ceil(totalPreguntasActuales() / preguntasPorPagina);
@@ -208,77 +245,30 @@ const handleAuth = async (e) => {
 
   // --- VISTAS ---
 
-// A) LOGIN / REGISTRO
   if (!usuario) return (
     <div style={{ width:'100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: styles.bg, color: styles.text, padding: '20px' }}>
       <div style={{ padding: '40px', background: styles.card, borderRadius: '15px', border: `1px solid ${styles.border}`, maxWidth:'400px', width:'100%', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }}>
         <h2 style={{textAlign:'center', marginBottom:'10px'}}>Acceso ITSZ</h2>
-        <p style={{textAlign:'center', fontSize:'0.9em', color:'#666', marginBottom:'25px'}}>Panel Docente</p>
-        
-        {/* PESTAÑAS LOGIN / REGISTRO */}
         <div style={{display:'flex', marginBottom:'20px', borderBottom:`1px solid ${styles.border}`}}>
-            <button 
-                onClick={() => {setEsRegistro(false); setErrorLogin('')}} 
-                style={{flex:1, padding:'10px', background: !esRegistro ? styles.inputBg : 'transparent', border:'none', cursor:'pointer', fontWeight: !esRegistro?'bold':'normal', borderBottom: !esRegistro ? `2px solid ${styles.accent}` : 'none', color:styles.text}}
-            >
-                Iniciar Sesión
-            </button>
-            <button 
-                onClick={() => {setEsRegistro(true); setErrorLogin('')}} 
-                style={{flex:1, padding:'10px', background: esRegistro ? styles.inputBg : 'transparent', border:'none', cursor:'pointer', fontWeight: esRegistro?'bold':'normal', borderBottom: esRegistro ? `2px solid ${styles.accent}` : 'none', color:styles.text}}
-            >
-                Registrarse
-            </button>
+            <button onClick={() => {setEsRegistro(false); setErrorLogin('')}} style={{flex:1, padding:'10px', background: !esRegistro ? styles.inputBg : 'transparent', border:'none', cursor:'pointer', fontWeight: !esRegistro?'bold':'normal', borderBottom: !esRegistro ? `2px solid ${styles.accent}` : 'none', color:styles.text}}>Login</button>
+            <button onClick={() => {setEsRegistro(true); setErrorLogin('')}} style={{flex:1, padding:'10px', background: esRegistro ? styles.inputBg : 'transparent', border:'none', cursor:'pointer', fontWeight: esRegistro?'bold':'normal', borderBottom: esRegistro ? `2px solid ${styles.accent}` : 'none', color:styles.text}}>Registro</button>
         </div>
-
         <form onSubmit={handleAuth}>
-            <label style={{fontSize:'0.8em', display:'block', marginBottom:'5px'}}>Correo Institucional:</label>
-            <input 
-                type="email" 
-                placeholder="ejemplo@itsz.edu.mx" 
-                value={email} 
-                onChange={e => setEmail(e.target.value)} 
-                style={{...inputStyle, marginBottom:'15px', width:'100%'}} 
-                required 
-            />
-            
-            <label style={{fontSize:'0.8em', display:'block', marginBottom:'5px'}}>
-                {esRegistro ? 'Crea una contraseña:' : 'Contraseña:'}
-            </label>
-            <input 
-                type="password" 
-                placeholder="******" 
-                value={password} 
-                onChange={e => setPassword(e.target.value)} 
-                style={{...inputStyle, marginBottom:'20px', width:'100%'}} 
-                required 
-            />
-            
-            {errorLogin && <div style={{background:'#ffe6e6', color:'#d63031', padding:'10px', borderRadius:'5px', fontSize:'0.85em', textAlign:'center', marginBottom:'15px', border:'1px solid #fab1a0'}}>{errorLogin}</div>}
-            
-            <button type="submit" style={{width:'100%', padding:'12px', background: styles.accent, color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontWeight:'bold', fontSize:'1rem'}}>
-                {esRegistro ? 'Crear Cuenta' : 'Entrar al Panel'}
-            </button>
+            <input type="email" placeholder="Correo institucional" value={email} onChange={e => setEmail(e.target.value)} style={{...inputStyle, marginBottom:'15px', width:'100%'}} required />
+            <input type="password" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)} style={{...inputStyle, marginBottom:'20px', width:'100%'}} required />
+            {errorLogin && <p style={{color:'red', textAlign:'center', fontSize:'0.9em'}}>{errorLogin}</p>}
+            <button type="submit" style={{width:'100%', padding:'12px', background: styles.accent, color:'white', border:'none', borderRadius:'5px', cursor:'pointer', fontWeight:'bold'}}>{esRegistro ? 'Crear Cuenta' : 'Entrar'}</button>
         </form>
-        
-        {esRegistro && <p style={{fontSize:'0.8em', color:'#666', marginTop:'15px', textAlign:'center'}}>Nota: Solo podrás registrarte si tu correo ya fue autorizado por un administrador.</p>}
       </div>
     </div>
   );
 
-  // VISTA IMPRESIÓN
   if (modoImpresion && examenSeleccionado) {
     const ex = examenes.find(e => e.id === examenSeleccionado);
     return (
       <div className="hoja-examen">
         <div className="no-print" style={{ position: 'fixed', top: 10, right: 10, background:'white', padding:'10px', border:'1px solid black', zIndex:9999 }}><button onClick={() => setModoImpresion(null)}>❌ Cerrar</button></div>
-        <EncabezadoPDF 
-            asignatura={ex.asignatura || ex.titulo} // Usa Asignatura nueva, o Titulo (viejo) como respaldo
-            unidad={ex.unidad} 
-            tema={ex.tema} 
-            opcion={ex.opcion} 
-            docenteNombre={ex.docenteNombre} 
-        />
+        <EncabezadoPDF asignatura={ex.asignatura || ex.titulo} unidad={ex.unidad} tema={ex.tema} opcion={ex.opcion} docenteNombre={ex.docenteNombre} />
         <h3 style={{ textAlign: 'center', marginTop: '20px' }}>{modoImpresion === 'respuestas' ? 'CLAVE DE RESPUESTAS' : 'CUESTIONARIO'}</h3>
         {ex.preguntas && ex.preguntas.map((p, idx) => (
           <div key={idx} style={{ marginBottom: '10px', padding:'5px', breakInside: 'avoid' }}>
@@ -307,14 +297,12 @@ const handleAuth = async (e) => {
         </div>
       </div>
 
-      {/* PESTAÑAS */}
       <div style={{display:'flex', gap:'10px', marginBottom:'20px', borderBottom:`1px solid ${styles.border}`, paddingBottom:'10px'}}>
           <button onClick={() => setVistaActual('examenes')} style={{padding:'10px 20px', background: vistaActual==='examenes'?styles.accent:styles.card, color: vistaActual==='examenes'?'white':styles.text, border:'none', borderRadius:'5px', cursor:'pointer'}}>📝 Exámenes</button>
           <button onClick={() => { setVistaActual('resultados'); cargarResultados(); }} style={{padding:'10px 20px', background: vistaActual==='resultados'?styles.accent:styles.card, color: vistaActual==='resultados'?'white':styles.text, border:'none', borderRadius:'5px', cursor:'pointer'}}>📊 Resultados</button>
           <button onClick={() => setVistaActual('docentes')} style={{padding:'10px 20px', background: vistaActual==='docentes'?styles.accent:styles.card, color: vistaActual==='docentes'?'white':styles.text, border:'none', borderRadius:'5px', cursor:'pointer'}}>👥 Docentes</button>
       </div>
 
-      {/* VISTA DOCENTES */}
       {vistaActual === 'docentes' && (
           <div className="fade-in" style={{background: styles.card, padding:'20px', borderRadius:'8px', border:`1px solid ${styles.border}`}}>
               <h3>Directorio de Docentes</h3>
@@ -330,31 +318,17 @@ const handleAuth = async (e) => {
           </div>
       )}
 
-      {/* VISTA EXÁMENES */}
       {vistaActual === 'examenes' && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'flex-start' }}>
-            {/* COL 1: CONFIG */}
             <div style={{ flex: '1 1 350px', background: styles.card, padding: '20px', borderRadius: '8px', border: `1px solid ${styles.border}`, minWidth: '300px' }}>
                 <h3 style={{marginTop:0}}>1. Crear Examen</h3>
                 {!docenteActual && <p style={{color:'red', fontSize:'0.8em'}}>⚠️ Configura tu perfil en "Docentes" primero.</p>}
                 
-                {/* CAMPO 1: NOMBRE DEL EXAMEN (IDENTIFICADOR) */}
-                <label style={{fontSize:'0.9em', fontWeight:'bold'}}>Nombre del Examen (Identificador):</label>
-                <input 
-                    value={nuevoNombreExamen} 
-                    onChange={e => setNuevoNombreExamen(e.target.value)} 
-                    placeholder="Ej: Diagnóstico Unidad 1" 
-                    style={{...inputStyle, width:'100%', marginBottom:'10px'}} 
-                />
+                <label style={{fontSize:'0.9em', fontWeight:'bold'}}>Nombre del Examen:</label>
+                <input value={nuevoNombreExamen} onChange={e => setNuevoNombreExamen(e.target.value)} placeholder="Ej: Diagnóstico" style={{...inputStyle, width:'100%', marginBottom:'10px'}} />
 
-                {/* CAMPO 2: ASIGNATURA (OFICIAL) */}
-                <label style={{fontSize:'0.9em', fontWeight:'bold'}}>Asignatura (Para PDF):</label>
-                <input 
-                    value={nuevaAsignatura} 
-                    onChange={e => setNuevaAsignatura(e.target.value)} 
-                    placeholder="Ej: Ingeniería de Software" 
-                    style={{...inputStyle, width:'100%', marginBottom:'10px'}} 
-                />
+                <label style={{fontSize:'0.9em', fontWeight:'bold'}}>Asignatura:</label>
+                <input value={nuevaAsignatura} onChange={e => setNuevaAsignatura(e.target.value)} placeholder="Ej: Matemáticas" style={{...inputStyle, width:'100%', marginBottom:'10px'}} />
 
                 <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'10px'}}>
                     <div><label style={{fontSize:'0.9em'}}>Unidad:</label><input value={nuevaUnidad} onChange={e => setNuevaUnidad(e.target.value)} style={{...inputStyle, width:'100%'}} /></div>
@@ -372,7 +346,6 @@ const handleAuth = async (e) => {
                     <option value="">-- Selecciona Examen --</option>
                     {examenes.map(ex => (
                         <option key={ex.id} value={ex.id}>
-                            {/* Mostramos Nombre Examen - Asignatura */}
                             {ex.nombreExamen ? `${ex.nombreExamen} - ${ex.asignatura}` : ex.titulo}
                         </option>
                     ))}
@@ -395,11 +368,21 @@ const handleAuth = async (e) => {
                             <button onClick={() => handleImprimirAdmin('vacio')} style={{flex:1, padding:'8px', cursor:'pointer'}}>🖨️ Vacío</button>
                             <button onClick={() => handleImprimirAdmin('respuestas')} style={{flex:1, padding:'8px', cursor:'pointer'}}>🔑 Clave</button>
                         </div>
+                        
+                        {/* --- SECCIÓN CSV RESTAURADA --- */}
+                        <div style={{borderTop:`1px solid ${styles.border}`, paddingTop:'15px'}}>
+                            <h4 style={{margin:'0 0 5px 0', fontSize:'0.9rem'}}>Carga Masiva (CSV)</h4>
+                            <label style={{display:'block', marginBottom:'5px', cursor:'pointer', background:'#6c757d', color:'white', textAlign:'center', padding:'8px', borderRadius:'4px', fontSize:'0.9rem'}}>
+                            📥 Importar CSV <input type="file" accept=".csv" onChange={handleImportarCSV} style={{display:'none'}} />
+                            </label>
+                            <button onClick={handleExportarCSV} style={{width:'100%', background:'#17a2b8', color:'white', border:'none', padding:'8px', borderRadius:'4px', cursor:'pointer', fontSize:'0.9rem'}}>📤 Descargar Preguntas</button>
+                        </div>
+                        {/* ----------------------------- */}
+                        
                     </div>
                 )}
             </div>
 
-            {/* COL 2: PREGUNTAS */}
             <div style={{ flex: '2 1 500px', display: 'flex', flexDirection: 'column', gap: '20px', minWidth: '300px' }}>
                 <div style={{ background: styles.card, padding: '20px', borderRadius: '8px', border: `1px solid ${styles.border}` }}>
                     <h3 style={{marginTop:0}}>{modoEdicion ? '✏️ Editar Pregunta' : '➕ Agregar Pregunta Manual'}</h3>
@@ -455,7 +438,6 @@ const handleAuth = async (e) => {
         </div>
       )}
 
-      {/* VISTA RESULTADOS */}
       {vistaActual === 'resultados' && (
         <div className="fade-in">
             <div style={{ background: styles.card, padding: '15px', borderRadius: '8px', border: `1px solid ${styles.border}`, marginBottom: '15px', display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems:'flex-end' }}>
